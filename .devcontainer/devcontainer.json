@@ -34,6 +34,6 @@
       ]
     }
   },
-  "postCreateCommand": "chmod +x .devcontainer/setup.sh .devcontainer/scripts/*.sh && .devcontainer/setup.sh",
+  "postCreateCommand": "sudo chown -R node:node /home/node/.kiro /home/node/.local && chmod +x .devcontainer/setup.sh .devcontainer/scripts/*.sh && .devcontainer/setup.sh",
   "remoteUser": "node"
 }

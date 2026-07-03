@@ -28,7 +28,6 @@ Two named Docker volumes persist data across container rebuilds:
 postCreateCommand
   → setup.sh
       → git-setup.sh
-      → npm-setup.sh
       → aws-setup.sh      (interactive or placeholder)
       → uvx-setup.sh
       → kiro-setup.sh
