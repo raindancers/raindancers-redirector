@@ -8,17 +8,194 @@ Redirect legacy domains (e.g. `domainA.co.uk`, `domainA.co.nz`) to new consolida
 
 ## Architecture
 
-```
-Browser → CloudFront (+ WAF) → Lambda Function URL → DynamoDB
-                ↓
-         Cache hit → serve cached 301/302
+### Infrastructure Components
+
+```mermaid
+graph TB
+    subgraph "Public Internet"
+        Browser[Browser / Crawler]
+    end
+
+    subgraph "AWS Edge (us-east-1)"
+        WAF[WAF WebACL]
+        CF[CloudFront Distribution]
+    end
+
+    subgraph "AWS us-east-1"
+        subgraph "Redirect Lookup"
+            FnUrl[Lambda Function URL<br/>OAC Auth]
+            Handler[Redirect Handler<br/>Python 3.12]
+        end
+
+        subgraph "Data Store"
+            DDB[(DynamoDB Table<br/>On-Demand / Encrypted)]
+            Stream[DynamoDB Stream]
+        end
+
+        subgraph "CSV Import Pipeline"
+            S3[S3 Import Bucket<br/>imports/ prefix]
+            Loader[CSV Loader Lambda<br/>Python 3.12]
+            Logs[S3 logs/ prefix<br/>JSON]
+            Errors[S3 errors/ prefix<br/>CSV]
+        end
+
+        subgraph "Cache Management"
+            Invalidation[Invalidation Lambda<br/>Python 3.12]
+            DLQ[SQS Dead Letter Queue]
+        end
+
+        subgraph "DNS & TLS"
+            R53[Route 53<br/>A Records]
+            ACM[ACM Certificate<br/>Apex + Wildcard SANs]
+        end
+
+        subgraph "Monitoring"
+            CW[CloudWatch Alarms]
+            SNS[SNS Topic<br/>Optional]
+        end
+    end
+
+    Browser --> R53
+    R53 --> CF
+    CF --> WAF
+    WAF --> CF
+    CF --> FnUrl
+    FnUrl --> Handler
+    Handler --> DDB
+    CF -.- ACM
+
+    S3 -->|ObjectCreated| Loader
+    Loader --> DDB
+    Loader --> Logs
+    Loader --> Errors
+
+    Stream --> Invalidation
+    Invalidation -->|CreateInvalidation| CF
+    Invalidation -.->|On Failure| DLQ
+
+    Handler -.-> CW
+    Invalidation -.-> CW
+    DDB -.-> CW
+    CW -.-> SNS
 ```
 
-- **CloudFront** caches redirect responses (90-day default TTL)
-- **Lambda** normalises URLs then looks up redirects: exact match → pattern match → fallback → 404
-- **DynamoDB** stores redirect rules (single-table design)
-- **S3 + CSV Loader** for bulk import of redirect mappings
-- **DynamoDB Streams + Invalidation Lambda** for automatic cache purging on rule changes
+### Redirect Request Flow
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant CF as CloudFront
+    participant WAF as WAF
+    participant L as Lambda Handler
+    participant D as DynamoDB
+
+    B->>CF: GET https://old.example.co.uk/path?utm=x
+
+    alt Cache Hit
+        CF-->>B: 301 Location: https://new.example.com/path?utm=x
+    else Cache Miss
+        CF->>WAF: Evaluate request
+        WAF->>WAF: Bot Control → Rate Limit → IP Rep → CRS
+        WAF-->>CF: Allow
+
+        CF->>L: Forward via Function URL (OAC)
+
+        L->>L: Phase 1: Normalise URL
+        Note over L: Apply configured rules<br/>(strip www, lowercase, etc.)
+
+        L->>D: Phase 2: GetItem {host}#{path}
+        alt Exact Match
+            D-->>L: target, statusCode
+        else No Exact Match
+            L->>D: Phase 3: Query {host}#__pattern__*
+            alt Pattern Match
+                D-->>L: target with capture groups
+            else No Pattern Match
+                L->>D: Phase 4: GetItem {host}#__fallback__
+                alt Fallback Exists
+                    D-->>L: fallback target
+                else No Fallback
+                    L-->>CF: 404 Not Found
+                    CF-->>B: 404
+                end
+            end
+        end
+
+        L-->>CF: 301 Location: target?utm=x
+        CF->>CF: Cache response (90 days)
+        CF-->>B: 301 Location: target?utm=x
+    end
+```
+
+### CSV Import Flow
+
+```mermaid
+sequenceDiagram
+    participant A as Admin
+    participant S3 as S3 Bucket
+    participant L as CSV Loader
+    participant D as DynamoDB
+    participant I as Invalidation Lambda
+    participant CF as CloudFront
+
+    A->>S3: Upload imports/redirects.csv
+
+    S3->>L: ObjectCreated trigger
+
+    loop For each CSV row
+        L->>L: Validate (domain, loops, status code)
+        L->>L: Normalise path
+        L->>D: Check duplicate (GetItem)
+        alt New Entry
+            L->>L: Check target reachability (HEAD)
+            alt Target returns 200 OK
+                L->>D: BatchWriteItem
+            else Target returns 3xx
+                L->>L: Log error (redirect chain)
+            end
+        else Duplicate
+            L->>L: Log as duplicate, skip
+        end
+    end
+
+    L->>S3: Write logs/redirects-{timestamp}.json
+    L->>S3: Write errors/redirects-{timestamp}.csv
+
+    D->>I: Stream event (MODIFY/REMOVE)
+    I->>CF: CreateInvalidation
+```
+
+### Cache Invalidation Flow
+
+```mermaid
+flowchart LR
+    subgraph "DynamoDB Stream"
+        M[MODIFY event]
+        R[REMOVE event]
+    end
+
+    subgraph "Invalidation Lambda"
+        Check{Entry type?}
+        Specific[Invalidate /specific/path]
+        Full[Invalidate /*]
+    end
+
+    subgraph "CloudFront"
+        Cache[Edge Cache]
+    end
+
+    subgraph "Failure Handling"
+        DLQ[SQS DLQ<br/>14-day retention]
+    end
+
+    M --> Check
+    R --> Check
+    Check -->|Exact match| Specific
+    Check -->|Pattern or Fallback| Full
+    Specific --> Cache
+    Full --> Cache
+    Check -.->|After 3 retries| DLQ
+```
 
 ## Installation
 
