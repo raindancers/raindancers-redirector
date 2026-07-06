@@ -1,0 +1,42 @@
+{
+  "name": "developer",
+  "description": "Development agent with auto-approved file and shell permissions for this workspace",
+  "prompt": null,
+  "tools": [
+    "read",
+    "write",
+    "shell",
+    "aws",
+    "report",
+    "introspect",
+    "knowledge",
+    "thinking",
+    "todo",
+    "delegate",
+    "grep",
+    "glob",
+    "@awslabs.aws-api-mcp-server",
+    "@awslabs.iam-mcp-server",
+    "@awslabs.cloudwatch-mcp-server",
+    "@awslabs.cloudtrail-mcp-server",
+    "@awslabs.aws-pricing-mcp-server",
+    "@awslabs.aws-documentation-mcp-server",
+    "@aws-knowledge-mcp-server",
+    "@microsoft-learn"
+  ],
+  "allowedTools": [
+    "fs_write",
+    "str_replace",
+    "execute_bash",
+    "delete_file",
+    "fs_append",
+    "read_file",
+    "read_files"
+  ],
+  "toolAliases": {},
+  "resources": [],
+  "hooks": {},
+  "toolsSettings": {},
+  "includeMcpJson": true,
+  "model": null
+}

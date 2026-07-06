@@ -1,250 +1,269 @@
-# CDK Development Container Template
+# raindancers-redirector
 
-A template repository for CDK-based projects using VS Code devcontainers with Kiro CLI for AI-assisted development.
+A reusable AWS CDK construct for multi-domain URL redirect services. Deploys a complete redirect infrastructure using CloudFront, Lambda, and DynamoDB — no servers to manage, no code changes to add redirects.
 
-## What You Get
+## Use Case
 
-- **VS Code** as the editor with devcontainer support
-- **Kiro CLI** as the AI coding agent (terminal-based)
-- **AWS CLI** with interactive SSO configuration on first run
-- **Azure CLI** for Microsoft Graph / Entra ID operations
-- **12 MCP servers** pre-configured for AWS, GitHub, and Microsoft services
-- **Steering files** for consistent AI behaviour across the team
-- **Auth persistence** — Kiro and AWS credentials survive container rebuilds
+Redirect legacy domains (e.g. `domainA.co.uk`, `domainA.co.nz`) to new consolidated domains (e.g. `domainA.com/uk`) while preserving SEO link equity, bookmarks, and inbound links.
 
-## Quick Start
-
-1. Create a new repo from this template
-2. Clone it in WSL2 (recommended) or locally
-3. Open in VS Code → "Reopen in Container"
-4. On first run, the setup will prompt you for AWS SSO details
-5. Authenticate Kiro CLI:
-   ```bash
-   kiro-cli login --use-device-flow
-   ```
-6. Start coding:
-   ```bash
-   kiro-cli
-   ```
-
-## Project Structure
+## Architecture
 
 ```
-.devcontainer/
-├── devcontainer.json          # Container config, extensions, volume mounts
-├── setup.sh                   # Setup orchestrator
-└── scripts/
-    ├── git-setup.sh           # Auto-configures git identity from GitHub
-    ├── aws-setup.sh           # Interactive AWS SSO config (first-run only)
-    ├── uvx-setup.sh           # Installs uv/uvx for Python MCP servers
-    ├── kiro-setup.sh          # Installs Kiro CLI
-    └── mcp-setup.sh           # Configures all MCP servers
-.kiro/
-└── steering/                  # Project guidelines for Kiro
-    ├── security-architecture-principles.md
-    ├── DonotchangeCodeWithoutAsking.md
-    ├── documentation.md
-    ├── bicep-validation.md
-    ├── propertyshorthand.md
-    └── Imports.md
+Browser → CloudFront (+ WAF) → Lambda Function URL → DynamoDB
+                ↓
+         Cache hit → serve cached 301/302
 ```
 
-## MCP Servers
+- **CloudFront** caches redirect responses (90-day default TTL)
+- **Lambda** normalises URLs then looks up redirects: exact match → pattern match → fallback → 404
+- **DynamoDB** stores redirect rules (single-table design)
+- **S3 + CSV Loader** for bulk import of redirect mappings
+- **DynamoDB Streams + Invalidation Lambda** for automatic cache purging on rule changes
 
-The following MCP servers are pre-configured in `~/.kiro/settings/mcp.json`:
-
-### Remote (no local process, instant)
-
-| Server | Purpose |
-|--------|---------|
-| GitHub | PRs, issues, Actions, code search (OAuth on first use) |
-| AWS Knowledge | AWS docs and knowledge base |
-| Microsoft Learn | Entra ID / Azure / M365 documentation |
-| Microsoft Enterprise | Read-only Microsoft Graph queries (OAuth on first use) |
-
-### Local (uvx, spin up on demand)
-
-| Server | Purpose |
-|--------|---------|
-| AWS MCP (managed, preview) | Combined API + docs + Agent SOPs with CloudTrail audit |
-| CDK | Construct patterns, best practices, CDK Nag compliance |
-| AWS Documentation | Full AWS docs search and recommendations |
-| AWS API | Execute AWS CLI commands via the agent |
-| IAM | Manage users, roles, policies with security best practices |
-| CloudWatch | Query logs, metrics, and alarms |
-| CloudTrail | API activity audit trail |
-| AWS Pricing | Cost estimation and pricing lookups |
-
-## AWS Configuration
-
-The AWS setup (`scripts/aws-setup.sh`) is interactive on first run:
-
-- Prompts for your SSO start URL, region, and profiles
-- Generates `~/.aws/config` with a unique session name per user/repo/branch
-- Skips automatically on subsequent container rebuilds
-- In headless environments (CI, prebuilds), writes a placeholder config
-
-To reconfigure:
-```bash
-rm ~/.aws/config
-.devcontainer/scripts/aws-setup.sh
-```
-
-## Kiro CLI
-
-### Authentication
-
-First time only (persisted across rebuilds via named Docker volumes):
-```bash
-kiro-cli login --use-device-flow
-```
-
-### Persistence
-
-The devcontainer mounts two named volumes:
-- `kiro-config` → `~/.kiro` (settings, steering, MCP config)
-- `kiro-cli-data` → `~/.local/share/kiro-cli` (auth tokens, session data)
-
-### Steering Files
-
-Project-level steering files in `.kiro/steering/` are automatically picked up by Kiro CLI. These define non-negotiable conventions (security architecture, documentation standards, etc.) that the AI follows in every session.
-
-## VS Code Extensions
-
-- TypeScript language support
-- AWS Toolkit
-- GitHub Actions
-- JSON language support
-- Python + pylint
-
-## Base Image Features
-
-- TypeScript/Node.js 22
-- AWS CLI
-- Azure CLI
-- Docker-in-Docker
-- Python + uv/uvx
-- GitHub CLI
-
-## WSL2 Setup (Windows)
-
-**This is the recommended way to use this template on Windows.** Working directly on the Windows filesystem is significantly slower (5-10x) for Node.js operations like `npm install`.
-
-### Prerequisites
-
-- Windows 10/11 with WSL2 enabled
-- Docker Desktop for Windows with the **WSL2 backend** enabled
-- VS Code with the **Dev Containers** extension installed
-- A WSL2 distro (e.g., Ubuntu) from the Microsoft Store
-
-### Step-by-Step
-
-1. **Open a WSL2 terminal** (e.g., Ubuntu from Windows Terminal)
-
-2. **Clone the repo in the WSL2 filesystem** (not `/mnt/c/`):
-   ```bash
-   cd ~
-   git clone <repository-url>
-   cd <project-name>
-   ```
-
-3. **Open in VS Code**:
-   ```bash
-   code .
-   ```
-
-4. **Reopen in Container**: When VS Code opens, click "Reopen in Container" in the notification
-   - Or use the Command Palette: `Dev Containers: Reopen in Container`
-
-5. **First run**: The AWS setup will prompt you interactively for SSO details. Follow the prompts.
-
-6. **Authenticate Kiro CLI**:
-   ```bash
-   kiro-cli login --use-device-flow
-   ```
-
-### Why WSL2?
-
-Your development environment runs as: **Windows → WSL2 → Docker → Dev Container**
-
-- Files are stored natively in WSL2's ext4 filesystem (not Windows NTFS via `/mnt/c/`)
-- Docker runs directly in WSL2, not through Hyper-V
-- The devcontainer gets native Linux I/O for `npm install`, `yarn`, `tsc`, etc.
-- Result: massively faster builds and installs compared to working from the Windows filesystem
-
-### Verify Performance
-
-To confirm you're running with optimal performance inside the container:
-```bash
-# Should show ext4, not 9p or drvfs
-df -T /workspaces/*
-
-# Should show microsoft-standard-WSL2 kernel
-uname -r
-```
-
-### Where It Appears in VS Code
-
-The devcontainer shows under **Dev Containers** in the Remote Explorer panel, not under WSL Targets. This is correct — you're connected to the container, which Docker hosts inside WSL2.
-
-### GitHub CLI in WSL2
-
-If you need to authenticate with GitHub from your WSL2 distro (for private repos):
+## Installation
 
 ```bash
-# Install gh (one-time, as root)
-wsl -u root
-apt update && apt install gh
-exit
-
-# Authenticate (as your regular user)
-gh auth login
+npm install raindancers-redirector
 ```
 
-This installs `gh` in your WSL2 distro, not inside the devcontainer. The devcontainer inherits your WSL2 git credentials automatically.
+## Usage
 
-### Troubleshooting
+```typescript
+import { RedirectService, NormalisationRule } from 'raindancers-redirector';
 
-| Problem | Fix |
-|---------|-----|
-| "Reopen in Container" not showing | Ensure Dev Containers extension is installed in VS Code |
-| Very slow file operations | Check you cloned into `~/` not `/mnt/c/`. Run `pwd` — should start with `/home/` |
-| Docker not running | Open Docker Desktop, ensure WSL2 backend is enabled in Settings → General |
-| Container build fails | Check `~/setup.log` inside the container for which script failed |
+new RedirectService(this, 'Redirects', {
+  sourceDomains: [
+    { domain: 'domainA.co.uk', fallbackUrl: 'https://domainA.com/uk' },
+    { domain: 'domainA.co.nz', fallbackUrl: 'https://domainA.com/nz' },
+    { domain: 'domainB.com.au' },
+  ],
+  normalisationRules: [
+    { rule: NormalisationRule.STRIP_WWW },
+    { rule: NormalisationRule.LOWERCASE_PATH },
+    { rule: NormalisationRule.COLLAPSE_SLASHES },
+    { rule: NormalisationRule.STRIP_HTML_EXTENSION },
+    { rule: NormalisationRule.STRIP_INDEX_FILES },
+    { rule: NormalisationRule.STRIP_TRAILING_SLASH },
+    { rule: NormalisationRule.DROP_FACETED_PARAMS, params: ['manufacturer', 'limit', 'orderby', 'p', 'product_list_order'] },
+    { rule: NormalisationRule.DROP_TRACKING_PARAMS, params: ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid', 'msclkid', 'dclid'] },
+  ],
+  enforceNoRedirectChains: true,
+  rateLimitPerIp: 1000,
+  alertTopic: mySnsTopic,
+});
+```
 
-## Container User
+## Requirements
 
-Runs as `node` (not root) for security and Node.js compatibility. Home directory is `/home/node`.
+- Stack must be deployed to **us-east-1** (CloudFront requirement)
+- Route 53 hosted zones for each source domain must exist in the same account
+- AWS SSO login must be active before deployment
 
-## Logs
+## Props
 
-Setup progress is logged to `~/setup.log` for troubleshooting.
+| Prop | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `sourceDomains` | `SourceDomain[]` | Yes | — | Legacy domains to redirect from |
+| `normalisationRules` | `NormalisationRuleConfig[]` | No | `[]` (none) | URL normalisation rules to apply before lookup |
+| `enforceNoRedirectChains` | `boolean` | No | `true` | Reject CSV entries where target returns 3xx instead of 200 |
+| `cacheTtl` | `number` | No | `7776000` (90 days) | CloudFront cache TTL in seconds |
+| `rateLimitPerIp` | `number` | No | `100` | WAF rate limit per IP per 5 minutes (does not apply to verified crawlers) |
+| `alertTopic` | `sns.ITopic` | No | — | SNS topic for CloudWatch alarm notifications |
+| `encryptionKey` | `kms.IKey` | No | — (SSE-S3) | KMS key for S3 bucket encryption. When omitted, uses S3-managed encryption (SSE-S3). Use when compliance requires customer-managed keys. |
 
-## Steering Files to Add Per Project
+### SourceDomain
 
-The template includes general-purpose steering files. When starting a new project, consider adding these to `.kiro/steering/`:
+| Prop | Type | Required | Description |
+|------|------|----------|-------------|
+| `domain` | `string` | Yes | The legacy domain to redirect from |
+| `fallbackUrl` | `string` | No | Default redirect for unmatched paths on this domain |
 
-| File | Purpose |
-|------|---------|
-| `aws-region.md` | Default region and any multi-region expectations |
-| `testing.md` | Test framework (jest/vitest), snapshot vs fine-grained assertions, coverage expectations |
-| `graph-operations.md` | Microsoft Graph conventions — delegated vs application permissions, preferred auth patterns |
-| `commit-style.md` | Conventional commits, PR structure, commit granularity |
-| `naming-conventions.md` | Resource naming patterns (e.g. `{project}-{env}-{resource}`), construct ID conventions |
-| `error-handling.md` | Preferred patterns for Lambda/API error responses, error types |
+### NormalisationRuleConfig
 
-These are intentionally left out of the template — they vary too much between projects to standardise.
+| Prop | Type | Required | Description |
+|------|------|----------|-------------|
+| `rule` | `NormalisationRule` | Yes | The normalisation rule to apply |
+| `params` | `string[]` | No | Query params to drop. Required for `DROP_FACETED_PARAMS` and `DROP_TRACKING_PARAMS`. |
 
-## Customization
+## Resources Created
 
-- **AWS profiles**: Delete `~/.aws/config` and re-run the setup script
-- **MCP servers**: Edit `scripts/mcp-setup.sh` to add/remove servers
-- **Steering**: Add/edit markdown files in `.kiro/steering/`
-- **New setup steps**: Create a script in `scripts/`, call it from `setup.sh`
-- **Extensions**: Edit the `customizations.vscode.extensions` array in `devcontainer.json`
+| Resource | Purpose |
+|----------|---------|
+| DynamoDB Table | Redirect rule storage (on-demand, encrypted, PITR) |
+| Lambda Function + URL | Redirect handler (Python 3.12, 128MB) |
+| CloudFront Distribution | Edge caching + TLS termination |
+| ACM Certificate | TLS for all source domains (apex + wildcard) |
+| WAF WebACL | Bot Control, rate limiting, IP reputation, Known Bad Inputs, Core Rule Set |
+| S3 Bucket | CSV upload target for bulk imports |
+| Lambda Function | CSV loader (Python 3.12, 512MB) |
+| Lambda Function | Cache invalidation on rule changes (Python 3.12) |
+| CloudWatch Alarms | Lambda errors, DynamoDB throttles |
+| Route 53 Records | A records (apex + wildcard) → CloudFront |
 
-## Known Issues
+## CSV Import Format
 
-- **MCP OAuth servers** (GitHub, Microsoft Enterprise) require a browser flow on first use
-- **AWS MCP** is in preview — behaviour may change
-- **Git LFS** not installed. If needed: `sudo apt-get update && sudo apt-get install git-lfs`
+Upload a CSV to the `imports/` prefix in the import bucket to bulk-load redirects:
+
+```
+s3://{bucket}/imports/my-redirects.csv
+```
+
+```csv
+source_domain,source_path,target_url,status_code
+domainA.co.uk,/old-product,https://domainA.com/uk/new-product,301
+domainA.co.uk,/removed-page,,410
+domainA.co.nz,/blog/old-post,https://domainA.com/nz/blog/new-post,301
+```
+
+CSVs can contain redirects for any configured source domain — there is no per-domain file requirement.
+
+Only files uploaded to `imports/*.csv` trigger processing. Logs and errors are written to separate prefixes and do not trigger reprocessing.
+
+### Validation
+
+The loader validates each row:
+- `source_domain` must be one of the configured `sourceDomains`
+- Target URL must be reachable (HEAD request)
+- No redirect loops (target host cannot match source domain)
+- When `enforceNoRedirectChains` is true, target must return 200 OK (not 3xx)
+- Duplicate entries (already in DynamoDB) are skipped
+- Normalisation rules (if configured) are applied to paths before writing
+
+### Output Files
+
+Each CSV import produces output files in the same S3 bucket:
+
+| Path | Format | Content |
+|------|--------|---------|
+| `logs/{filename}-{timestamp}.json` | JSON | Full processing log with summary and per-row outcomes |
+| `errors/{filename}-{timestamp}.csv` | CSV | Error rows only (for quick review) |
+
+### Log File Structure (JSON)
+
+```json
+{
+  "source_file": "imports/my-redirects.csv",
+  "processed_at": "2026-07-03T12:00:00Z",
+  "summary": {
+    "total": 150,
+    "success": 140,
+    "duplicate": 5,
+    "error": 5
+  },
+  "entries": [
+    {
+      "row_number": 2,
+      "source_domain": "domainA.co.uk",
+      "source_path": "/old-path",
+      "target_url": "https://domainA.com/uk/new-path",
+      "status_code": "301",
+      "outcome": "success",
+      "detail": "Written to DynamoDB as pk: domainA.co.uk#/old-path",
+      "target_response_headers": "content-type: text/html | server: nginx",
+      "processed_at": "2026-07-03T12:00:01Z"
+    }
+  ]
+}
+```
+
+## URL Normalisation
+
+Normalisation is **opt-in**. By default, no normalisation is applied. Enable specific rules via the `normalisationRules` prop.
+
+### Available Rules
+
+| Rule | Effect |
+|------|--------|
+| `STRIP_WWW` | Remove `www.` prefix from host |
+| `LOWERCASE_PATH` | Lowercase the entire path |
+| `COLLAPSE_SLASHES` | Replace `//` with `/` in path |
+| `STRIP_INDEX_FILES` | Remove `/index.php` and `/index.html` from path |
+| `STRIP_HTML_EXTENSION` | Remove `.html` suffix from path |
+| `STRIP_TRAILING_SLASH` | Remove trailing `/` (except root) |
+| `DROP_FACETED_PARAMS` | Drop query params specified in the rule's `params` field |
+| `DROP_TRACKING_PARAMS` | Drop tracking params specified in the rule's `params` field |
+
+When normalisation changes the URL, the redirect handler returns a single 301 to the normalised form before performing the redirect lookup. This avoids redirect chains — normalisation and redirect happen in one hop.
+
+### Query Param Handling
+
+- **`DROP_FACETED_PARAMS`** — drops the params specified in the rule's `params` field.
+- **`DROP_TRACKING_PARAMS`** — drops the params specified in the rule's `params` field. By default tracking params are preserved (passed through to the redirect target).
+- Both rules require `params` to be provided — the construct validates this at synth time.
+- If neither rule is enabled, all query params are passed through unchanged.
+
+## Robots.txt
+
+This service intentionally does not serve a `robots.txt` file. For a redirect service, you *want* crawlers to hit the legacy URLs, receive the 301 responses, and follow them to the new domain. This is how search engines discover the new URLs and transfer link equity. Blocking crawlers with `robots.txt` would slow down re-indexing and harm SEO during domain migration.
+
+The WAF Bot Control rule allows verified crawlers (Googlebot, Bingbot, etc.) through without rate limiting.
+
+## WAF Rule Order
+
+The WAF WebACL uses a deliberate rule evaluation order to protect against abuse while ensuring legitimate search engine crawlers are never blocked.
+
+| Priority | Rule | Action | Purpose |
+|----------|------|--------|---------|
+| 1 | Bot Control (COMMON) | Varies | Labels verified crawlers (Googlebot, Bingbot) before rate limiting runs |
+| 2 | Rate Limit (100/5min) | Block | Blocks abusive IPs — excludes verified bots via scope-down statement |
+| 3 | IP Reputation List | Block | Blocks known-malicious IPs (Amazon threat intelligence) |
+| 4 | Known Bad Inputs | Block | Blocks exploit patterns (Log4j, Java deserialization) |
+| 5 | Core Rule Set | Block | Broad protection (SQLi, XSS, path traversal) |
+
+### Why Bot Control runs first
+
+The rate-based rule must NOT apply to legitimate crawlers like Googlebot and Bingbot. During domain migration, crawlers aggressively re-index legacy URLs to discover the new targets — this is the primary purpose of the redirect service.
+
+AWS WAF evaluates rules in priority order. Bot Control must run first so it can label verified crawlers with `awswaf:managed:aws:bot-control:bot:verified`. The rate limit rule then uses a scope-down statement with a NOT condition on this label, meaning it only applies to requests that are NOT from verified bots.
+
+Without this ordering, crawlers would hit the rate limit during aggressive re-indexing and be blocked — defeating the purpose of the entire service.
+
+### Cost note
+
+Bot Control has per-request charges, but is placed first because the alternative (rate-limiting verified crawlers) is functionally broken for a redirect service. After CloudFront cache warm-up, actual request volume reaching WAF is low since most responses are served from cache.
+
+## Known Limitations
+
+- **Regex complexity**: Pattern-match entries use Python `re.compile()` on patterns stored in DynamoDB. No regex complexity validation is performed. Malicious or poorly-written patterns (catastrophic backtracking / ReDoS) could cause Lambda timeouts. The 5-second Lambda timeout is the mitigation. Test regex patterns for performance before adding to DynamoDB.
+
+## DynamoDB Key Design
+
+| Entry Type | Key Format | Example |
+|------------|-----------|---------|
+| Exact match | `{domain}#{path}` | `domainA.co.uk#/old-product` |
+| Pattern | `{domain}#__pattern__{priority}` | `domainA.co.uk#__pattern__010` |
+| Fallback | `{domain}#__fallback__` | `domainA.co.uk#__fallback__` |
+
+## Sub-Constructs
+
+The construct is composed of smaller, independently usable constructs:
+
+| Construct | File | Purpose |
+|-----------|------|---------|
+| `RedirectsTable` | `redirects-table.ts` | DynamoDB table |
+| `RedirectHandler` | `redirect-handler.ts` | Lambda + Function URL |
+| `RedirectDistribution` | `redirect-distribution.ts` | CloudFront + ACM + Route53 |
+| `RedirectWaf` | `redirect-waf.ts` | WAF WebACL |
+| `CsvImport` | `csv-import.ts` | S3 bucket + CSV loader |
+| `Invalidation` | `invalidation.ts` | Stream-triggered cache invalidation |
+| `FallbackSeeder` | `fallback-seeder.ts` | Seeds DynamoDB fallback entries at deploy time |
+| `Monitoring` | `monitoring.ts` | CloudWatch alarms |
+
+## Development
+
+```bash
+# Build
+npx projen build
+
+# Run TypeScript CDK tests
+npx projen test
+
+# Run Python Lambda unit tests
+pytest test/lambda/
+```
+
+See [.devcontainer/README.md](.devcontainer/README.md) for development environment setup.
+
+## License
+
+Apache-2.0
